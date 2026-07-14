@@ -1,7 +1,3 @@
-/**
- * Audio processing utilities for Gemini Live API
- */
-
 export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -12,78 +8,98 @@ export class AudioRecorder {
   private onWakeWord: (() => void) | null = null;
   private enrollmentBuffer: Float32Array[] = [];
   private isEnrolling: boolean = false;
+  private startId: number = 0; // 🔥 FIX: Race condition guard — har start() call ka unique ID
 
-  constructor(private onAudioData: (base64Data: string) => void, private onVolume?: (volume: number) => void) {}
+  constructor(
+    private onAudioData: (base64Data: string) => void,
+    private onVolume?: (volume: number) => void
+  ) {}
 
-  async start(options?: { wakeWord?: boolean, onWakeWord?: () => void }) {
+  async start(options?: { wakeWord?: boolean; onWakeWord?: () => void }) {
+    // 🔥 FIX 1: Increment ID taaki purane async calls khud ko cancel kar sakein
+    const myId = ++this.startId;
+
     try {
       this.isWakeWordMode = options?.wakeWord || false;
       this.onWakeWord = options?.onWakeWord || null;
 
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
+      // 🔥 FIX 2: Closed context ko bhi recreate karo (pehle sirf null check tha)
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        this.audioContext = new AudioCtx({ sampleRate: 16000 });
+      }
+
+      // Local reference — stop() iske baad null set kare toh bhi local variable safe rehta hai
+      const ctx = this.audioContext;
+
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+
+      // 🔥 FIX 3: getUserMedia se PEHLE ID check — agar stop() call ho chuka hai toh bail
+      if (myId !== this.startId) {
+        console.warn('[AudioRecorder] start() superseded, aborting');
+        return;
       }
 
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.source = this.audioContext.createMediaStreamSource(this.stream);
-      this.analyser = this.audioContext.createAnalyser();
+
+      // 🔥 FIX 4: getUserMedia ke BAAD bhi check — yahi pehle crash hota tha
+      if (myId !== this.startId || !this.audioContext || this.audioContext.state === 'closed') {
+        console.warn('[AudioRecorder] Context closed during getUserMedia, cleaning up');
+        this.stream.getTracks().forEach(t => t.stop());
+        this.stream = null;
+        return;
+      }
+
+      this.source = ctx.createMediaStreamSource(this.stream);
+      this.analyser = ctx.createAnalyser();
       this.analyser.fftSize = 256;
-      
-      this.processor = this.audioContext.createScriptProcessor(2048, 1, 1);
+
+      this.processor = ctx.createScriptProcessor(2048, 1, 1);
 
       this.processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        
+
         if (this.isEnrolling) {
           this.enrollmentBuffer.push(new Float32Array(inputData));
         }
 
-        // Calculate volume for visual feedback
+        // Volume calculation
         let sum = 0;
         for (let i = 0; i < inputData.length; i++) {
           sum += inputData[i] * inputData[i];
         }
-        const volume = Math.sqrt(sum / inputData.length);
-        this.onVolume?.(volume);
+        this.onVolume?.(Math.sqrt(sum / inputData.length));
 
-        if (this.isWakeWordMode) {
-          // Simple Wake Word Detection: Check for sustained volume + frequency profile
-          const bufferLength = this.analyser!.frequencyBinCount;
+        // Wake word detection
+        if (this.isWakeWordMode && this.analyser) {
+          const bufferLength = this.analyser.frequencyBinCount;
           const dataArray = new Uint8Array(bufferLength);
-          this.analyser!.getByteFrequencyData(dataArray);
-          
+          this.analyser.getByteFrequencyData(dataArray);
           const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-          if (average > 60) { // Slightly higher threshold to reduce false triggers
-            console.log("Wake word detected (volume-based)");
+          if (average > 60) {
+            console.log('[AudioRecorder] Wake word detected');
             this.isWakeWordMode = false;
             this.onWakeWord?.();
           }
-          // Still send audio data even in wake word mode so session gets input
-          const pcm16 = this.floatToPcm16(inputData);
-          const base64 = this.arrayBufferToBase64(pcm16.buffer);
-          this.onAudioData(base64);
-          return;
-        }
-
-        // Check if there's actual audio (not just silence)
-        const hasAudio = inputData.some(v => Math.abs(v) > 0.01);
-        if (hasAudio && Math.random() < 0.01) { // Log occasionally
-          console.log("Capturing audio data...");
         }
 
         const pcm16 = this.floatToPcm16(inputData);
-        const base64 = this.arrayBufferToBase64(pcm16.buffer);
+        const base64 = this.arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
         this.onAudioData(base64);
       };
 
       this.source.connect(this.analyser);
       this.analyser.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
-      console.log("Audio recorder started successfully");
+      this.processor.connect(ctx.destination);
+
+      console.log('[AudioRecorder] Started successfully');
     } catch (err) {
-      console.error("Failed to start audio recorder:", err);
+      // 🔥 FIX 5: Agar yeh stale call hai toh error log mat karo
+      if (myId !== this.startId) return;
+      console.error('[AudioRecorder] Failed to start:', err);
+      this.stop();
       throw err;
     }
   }
@@ -106,13 +122,24 @@ export class AudioRecorder {
   }
 
   stop() {
-    this.source?.disconnect();
-    this.processor?.disconnect();
-    this.stream?.getTracks().forEach(track => track.stop());
-    this.audioContext?.close();
-    
+    // 🔥 FIX 6: startId increment karo taaki koi bhi in-flight start() bail out kare
+    this.startId++;
+
+    try {
+      if (this.processor) this.processor.disconnect();
+      if (this.source) this.source.disconnect();
+      if (this.analyser) this.analyser.disconnect();
+      if (this.stream) this.stream.getTracks().forEach(track => track.stop());
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        this.audioContext.close().catch(() => {}); // Promise ignore — cleanup only
+      }
+    } catch (e) {
+      console.error('[AudioRecorder] Error during stop:', e);
+    }
+
     this.source = null;
     this.processor = null;
+    this.analyser = null;
     this.stream = null;
     this.audioContext = null;
   }
@@ -121,7 +148,7 @@ export class AudioRecorder {
     const pcm16 = new Int16Array(float32Array.length);
     for (let i = 0; i < float32Array.length; i++) {
       const s = Math.max(-1, Math.min(1, float32Array[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     return pcm16;
   }
@@ -129,8 +156,7 @@ export class AudioRecorder {
   private arrayBufferToBase64(buffer: ArrayBuffer): string {
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
+    for (let i = 0; i < bytes.byteLength; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
@@ -141,76 +167,84 @@ export class AudioPlayer {
   private audioContext: AudioContext | null = null;
   private nextStartTime: number = 0;
   private analyser: AnalyserNode | null = null;
+  private rafId: number | null = null;
 
   constructor(private onVolume?: (volume: number) => void) {
-    this.audioContext = new AudioContext({ sampleRate: 24000 });
-    this.analyser = this.audioContext.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.analyser.connect(this.audioContext.destination);
-    
-    // Start volume monitoring loop
-    this.monitorVolume();
+    // 🔥 FIX 7: AudioContext ko constructor mein mat banao —
+    // browser policy: AudioContext creation requires a user gesture.
+    // init() ab pehli playChunk() call pe hoga.
   }
 
-  private monitorVolume() {
-    if (!this.audioContext || !this.analyser) return;
-    
-    const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+  private ensureContext() {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      this.audioContext = new AudioContext({ sampleRate: 24000 });
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.connect(this.audioContext.destination);
+      this.nextStartTime = 0;
+      this.startVolumeMonitor();
+    }
+  }
+
+  private startVolumeMonitor() {
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+
     const update = () => {
-      if (this.audioContext?.state === 'running') {
-        this.analyser!.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        this.onVolume?.(average / 128); // Normalize to 0-1 approx
+      if (!this.analyser || !this.audioContext || this.audioContext.state !== 'running') {
+        this.rafId = requestAnimationFrame(update);
+        return;
       }
-      requestAnimationFrame(update);
+      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      this.analyser.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      this.onVolume?.(average / 128);
+      this.rafId = requestAnimationFrame(update);
     };
-    update();
+
+    this.rafId = requestAnimationFrame(update);
   }
 
-  async playChunk(base64Data: string) {
+  playChunk(base64Data: string) {
+    this.ensureContext();
     if (!this.audioContext || !this.analyser) return;
-    
-    if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
+
+    try {
+      const binary = atob(base64Data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+      const pcm16 = new Int16Array(bytes.buffer as ArrayBuffer);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 0x8000;
+
+      const audioBuffer = this.audioContext.createBuffer(1, float32.length, 24000);
+      audioBuffer.getChannelData(0).set(float32);
+
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.analyser);
+
+      const now = this.audioContext.currentTime;
+      if (this.nextStartTime < now) this.nextStartTime = now + 0.02;
+
+      source.start(this.nextStartTime);
+      this.nextStartTime += audioBuffer.duration;
+    } catch (e) {
+      console.error('[AudioPlayer] playChunk error:', e);
     }
-
-    const binary = atob(base64Data);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    
-    const pcm16 = new Int16Array(bytes.buffer);
-    const float32 = new Float32Array(pcm16.length);
-    for (let i = 0; i < pcm16.length; i++) {
-      float32[i] = pcm16[i] / 0x8000;
-    }
-
-    const audioBuffer = this.audioContext.createBuffer(1, float32.length, 24000);
-    audioBuffer.getChannelData(0).set(float32);
-
-    const source = this.audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.analyser); // Connect to analyser instead of destination directly
-
-    const now = this.audioContext.currentTime;
-    if (this.nextStartTime < now) {
-      this.nextStartTime = now + 0.02; // Reduced buffer for lower latency
-    }
-
-    console.log("Playing audio chunk at", this.nextStartTime);
-    source.start(this.nextStartTime);
-    this.nextStartTime += audioBuffer.duration;
   }
 
   stop() {
-    this.audioContext?.close();
-    this.audioContext = new AudioContext({ sampleRate: 24000 });
-    this.analyser = this.audioContext.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.analyser.connect(this.audioContext.destination);
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(() => {});
+    }
+    this.audioContext = null;
+    this.analyser = null;
     this.nextStartTime = 0;
-    this.monitorVolume();
+    // 🔥 FIX 8: stop() ke baad init() mat bulao — ensureContext() lazily karta hai yeh kaam
   }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Mic, Power, AlertCircle, Volume2, VolumeX, Settings, History, Lock, Unlock, User, UserPlus, WifiOff, ShieldAlert, Trophy, Zap } from 'lucide-react';
 import { AudioRecorder, AudioPlayer } from '@/src/lib/audio-utils';
 import { LiveSession, SessionState } from '@/src/lib/live-session';

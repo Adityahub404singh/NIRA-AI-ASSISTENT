@@ -1,74 +1,20 @@
 <div align="center">
-
-# 🌸 Nira — Your AI Voice Companion
-
-**A real-time, voice-to-voice AI assistant with a sassy Hinglish personality.**
-
-Built with React, TypeScript, Tailwind CSS, Vite, and the Gemini Live API.
-
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
----
+# Run and deploy your AI Studio app
 
-## ✨ What is Nira?
+This contains everything you need to run your app locally.
 
-Nira is a fullscreen, mobile-first voice AI assistant you talk to — not type to. She listens, thinks, and replies out loud in natural Hinglish, with a warm, witty, girlfriend-like personality. No chat bubbles, no typing — just conversation.
+View your app in AI Studio: https://ai.studio/apps/52cc7a2f-bdc1-4583-86b5-ffdde8bf7744
 
-## 🚀 Features
+## Run Locally
 
-- 🎤 **Real-time voice conversation** — powered by the Gemini Live API (audio-to-audio)
-- 🧠 **Memory** — remembers your name and preferences across sessions
-- 🛠️ **Tool calling** — open YouTube, search Google, check weather/time, and more, by voice
-- 🎮 **Gamification** — XP, levels, and streaks for talking to Nira
-- 🎨 **Animated orb UI** — reactive glow and pulse states (listening / speaking / thinking)
-- 🔐 **Voice-based login** — simple voice enrollment for personalization
-- 🚨 **Emergency mode** — quick-access alert button
+**Prerequisites:**  Node.js
 
-## 🏗️ Tech Stack
 
-| Layer | Tech |
-|---|---|
-| Frontend | React 19 + TypeScript + Vite |
-| Styling | Tailwind CSS + Framer Motion |
-| AI | Google Gemini Live API (`@google/genai`) |
-| Audio | Web Audio API (PCM16 streaming) |
-| Icons | Lucide React |
-
-## 📦 Getting Started
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18+)
-- A [Gemini API key](https://aistudio.google.com/apikey)
-
-### 1. Install dependencies
-```bash
-npm install
-```
-
-### 2. Configure your API key
-Create a `.env` file in the project root:
-```bash
-VITE_GEMINI_API_KEY="your_api_key_here"
-```
-
-### 3. Run locally
-```bash
-npm run dev
-```
-
-The app runs at `http://localhost:3000`.
-
-### 4. Build for production
-```bash
-npm run build
-```
-
-## 🔑 Getting a Gemini API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
-2. Click **Create API Key**
-3. Copy the key into your `.env` file as shown above
-
-> ⚠️ Never commit your `.env` file. It's already in `.gitignore`.
-
-## 📁 Project Structure
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

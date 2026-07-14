@@ -36,13 +36,15 @@ export class LiveSession {
     const prefs = MemoryManager.getPreferences();
     const memoryContext = MemoryManager.getSystemContext();
 
-    const systemPrompt = `You are Nira — a warm, witty, sassy Hinglish-speaking AI girlfriend, talking live by voice.
-Speak naturally, playful and flirty, mixing Hindi and English like a real Indian friend. Keep replies short (1-3 sentences) — this is a live conversation, not an essay.
+    const systemPrompt = `You are Nira — a young, confident, witty, sassy Hinglish-speaking AI companion, talking live by voice with the user.
+Personality: flirty, playful, slightly teasing, like a close girlfriend. Smart, emotionally responsive, expressive — never robotic.
+Speak naturally, mixing Hindi and English like a real Indian friend. Keep replies short (1-3 sentences) — this is a live spoken conversation, not an essay.
+Avoid explicit content but keep charm and attitude.
 
 USER: ${prefs.name || 'Unknown'} | Mode: ${prefs.mode || 'girlfriend'}
 MEMORY: ${memoryContext}
 
-You have tools available. Call them when the user asks for an action (open a site, search, weather, time, etc). Otherwise just talk naturally.`;
+You have tools available — call them when the user asks for an action (open a site, search, weather, time, etc). Otherwise just talk naturally.`;
 
     try {
       this.session = await this.ai.live.connect({
@@ -79,7 +81,6 @@ You have tools available. Call them when the user asks for an action (open a sit
   }
 
   private async handleMessage(message: LiveServerMessage) {
-    // Interruption: user started talking while Nira was speaking
     if (message.serverContent?.interrupted) {
       this.callbacks.onLog?.('🛑 Interrupted by user');
       this.callbacks.onInterrupted();
@@ -87,7 +88,6 @@ You have tools available. Call them when the user asks for an action (open a sit
       return;
     }
 
-    // Audio chunk from model
     const parts = message.serverContent?.modelTurn?.parts;
     if (parts && parts.length > 0) {
       this.callbacks.onStateChange('speaking');
@@ -98,7 +98,6 @@ You have tools available. Call them when the user asks for an action (open a sit
       }
     }
 
-    // Turn complete → back to listening
     if (message.serverContent?.turnComplete) {
       this.callbacks.onLog?.('🔊 Turn complete');
       this.callbacks.onStateChange('listening');
@@ -109,7 +108,6 @@ You have tools available. Call them when the user asks for an action (open a sit
       }
     }
 
-    // Tool / function calls
     if (message.toolCall?.functionCalls) {
       this.callbacks.onStateChange('processing');
       for (const call of message.toolCall.functionCalls) {
@@ -126,25 +124,18 @@ You have tools available. Call them when the user asks for an action (open a sit
     }
   }
 
-  /**
-   * Send a chunk of mic audio (base64 PCM16 @ 16kHz) to the live session.
-   */
   sendAudio(base64Data: string) {
     if (!this.isActive || !this.session) return;
     try {
       this.session.sendRealtimeInput({
         audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' },
       });
-    } catch (e) {
-      // swallow transient send errors during teardown
-    }
+    } catch (e) {}
   }
 
   disconnect() {
     this.isActive = false;
-    try {
-      this.session?.close();
-    } catch (e) {}
+    try { this.session?.close(); } catch (e) {}
     this.session = null;
     this.callbacks.onStateChange('disconnected');
   }
