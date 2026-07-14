@@ -1,0 +1,11 @@
+{
+  "name": "Nira AI Assistant",
+  "description": "A young, confident, witty, and sassy female AI assistant with real-time voice interaction.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "voice-interaction",
+    "real-time-ai"
+  ]
+}
